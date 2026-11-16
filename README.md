@@ -6,9 +6,7 @@ Painel privado para acompanhar manutenção preventiva e diagnósticos do Volksw
 
 O build empacota os arquivos de `src/` como módulos do Worker. O Worker serve a interface, encaminha `/api/*` ao Durable Object e persiste o estado e as fotos em SQLite. A migração `v1` cria a classe SQLite-backed `GarageState`.
 
-O GitHub Actions valida o projeto e publica no Worker `garagem-hugo` quando há o secret `CLOUDFLARE_API_TOKEN`. Para habilitar os próximos deploys automáticos, adicione um token Cloudflare com permissão de edição de Workers em **Settings → Secrets and variables → Actions**. O workflow já conhece o Account ID; o token não fica no repositório.
-
-O primeiro deploy deste projeto é feito pelo mantenedor da conta Cloudflare. Depois disso, cada push em `main` executa o workflow. `workflow_dispatch` permite executar o deploy manualmente.
+O Worker está conectado ao repositório pelo Cloudflare Workers Builds. Em cada push para `main`, a Cloudflare executa `npm run build` e publica com `npx wrangler deploy`; o código de build e o deploy ficam na Cloudflare. Builds de preview estão desativados.
 
 ## Acesso e dados
 
@@ -30,3 +28,5 @@ npm run dev
 ```bash
 npm run check
 ```
+
+O deploy local é opcional. Em produção, os pushes em `main` são publicados pelo Workers Builds.
