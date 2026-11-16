@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { html, css, app } from './ui.js';
 
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -120,13 +121,21 @@ export default {
       return stub.fetch(new Request(target, request));
     }
 
-    const asset = await env.ASSETS.fetch(request);
-    if (url.pathname === '/' || url.pathname.endsWith('.html')) {
-      const headers = new Headers(asset.headers);
-      headers.set('Cache-Control', 'private, no-store');
-      headers.set('X-Content-Type-Options', 'nosniff');
-      return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
+    const content = url.pathname === '/' || url.pathname === '/index.html' ? html
+      : url.pathname === '/styles.css' ? css
+      : url.pathname === '/app.js' ? app : null;
+    if (content === null) return new Response('Not found.', { status: 404 });
+    const contentType = url.pathname === '/styles.css' ? 'text/css; charset=utf-8'
+      : url.pathname === '/app.js' ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8';
+    const headers = {
+      'Content-Type': contentType,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff'
+    };
+    if (contentType.startsWith('text/html')) {
+      headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+      headers['Referrer-Policy'] = 'no-referrer';
     }
-    return asset;
+    return new Response(content, { headers });
   }
 };

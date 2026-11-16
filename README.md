@@ -4,7 +4,7 @@ Painel privado para acompanhar manutenção preventiva e diagnósticos do Volksw
 
 ## Deploy
 
-O repositório usa Cloudflare Workers Static Assets. O Worker serve os arquivos de `src/`, encaminha `/api/*` ao Durable Object e persiste o estado e as fotos em SQLite. A migração `v1` cria a classe SQLite-backed `GarageState`.
+O build empacota os arquivos de `src/` como módulos do Worker. O Worker serve a interface, encaminha `/api/*` ao Durable Object e persiste o estado e as fotos em SQLite. A migração `v1` cria a classe SQLite-backed `GarageState`.
 
 O GitHub Actions valida o projeto e publica no Worker `garagem-hugo` quando há o secret `CLOUDFLARE_API_TOKEN`. Para habilitar os próximos deploys automáticos, adicione um token Cloudflare com permissão de edição de Workers em **Settings → Secrets and variables → Actions**. O workflow já conhece o Account ID; o token não fica no repositório.
 
@@ -25,7 +25,7 @@ npm ci
 npm run dev
 ```
 
-`wrangler dev` usa o Durable Object local. Para validar o pacote de deploy:
+`npm run dev` empacota a interface e inicia o Worker com o Durable Object local. Para validar o pacote de deploy:
 
 ```bash
 npm run check

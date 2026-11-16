@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "check": "wrangler deploy --dry-run"
+    "build": "node scripts/build-ui.mjs",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "check": "node --check worker/index.js && node --check worker/ui.js && wrangler deploy --dry-run"
   },
   "devDependencies": {
     "wrangler": "4.163.0"
