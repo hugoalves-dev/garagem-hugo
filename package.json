@@ -10,6 +10,7 @@
     "check": "node --check worker/index.js && node --check worker/ui.js && wrangler deploy --dry-run"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "wrangler": "4.163.0"
   }
 }
