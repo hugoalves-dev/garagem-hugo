@@ -5,6 +5,7 @@
   "compatibility_date": "2026-11-16",
   "account_id": "68beee80b1f17d2689fd93e17b615d70",
   "workers_dev": true,
+  "preview_urls": false,
   "durable_objects": {
     "bindings": [
       { "name": "GARAGE_STATE", "class_name": "GarageState" }
