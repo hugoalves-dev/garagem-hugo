@@ -107,11 +107,7 @@ export class GarageState extends DurableObject {
 }
 
 export default {
-  async fetch(request, env, ctx) {
-    let identity;
-    try { identity = await ctx.access?.getIdentity(); } catch (_) { identity = null; }
-    if (!identity?.email) return new Response('Cloudflare Access authentication required.', { status: 401 });
-
+  async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/')) {
       const origin = request.headers.get('origin');

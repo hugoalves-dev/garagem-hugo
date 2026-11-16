@@ -12,7 +12,7 @@ O primeiro deploy deste projeto é feito pelo mantenedor da conta Cloudflare. De
 
 ## Acesso e dados
 
-- O Worker deve permanecer atrás do Cloudflare Access; o código também exige uma identidade Access antes de servir a interface ou a API.
+- O hostname de produção fica atrás do Cloudflare Access com uma política reutilizável de login; URLs de preview do Worker ficam desativadas.
 - O estado da garagem e fotos JPEG/PNG/WebP (até 5 MB após compressão) ficam no SQLite do Durable Object.
 - Fotos são linhas BLOB separadas; os registros guardam somente a referência da foto.
 - Não há dados pessoais do veículo versionados neste repositório. O estado inicial é genérico e deixa os itens pendentes de confirmação.
