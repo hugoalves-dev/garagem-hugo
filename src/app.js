@@ -1,9 +1,10 @@
+import { activeRecords, canResolveProblem, problemResolutions, recordNeedsAttention } from './vehicle/status.js';
 import { components, byId } from './vehicle/catalog.js';
 
 const STORE_KEY = 'fox-em-dia-v1';
 const DB_NAME = 'fox-em-dia-local';
 const DB_STORE = 'photos';
-const garageDate = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Fortaleza' }).format(new Date());
+const garageDate = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 const today = garageDate();
 const recordKinds = {
   inspecao: 'Inspeção', sintoma: 'Sintoma / problema', servico: 'Serviço realizado', tarefa: 'Tarefa',
@@ -145,7 +146,12 @@ function showToast(message) { const el = $('#toast'); el.textContent = message; 
 let vehicle, vehicleModule;
 function showVehicle(id) {
   vehicleModule ??= import('./vehicle/view.js').then(({ mountVehicle, actions }) => mountVehicle($('#view-veiculo'), {
-    state: () => state, today: garageDate, escape: escapeHtml, formatDate: fmtDate, toast: showToast,
+    state: () => state,
+    setSideDoors(value) {
+      state.sideDoors = value;
+      save();
+    },
+    today: garageDate, escape: escapeHtml, formatDate: fmtDate, toast: showToast,
     guide: system => [...homeTests, ...proTests].filter(g => g.system === system),
     action(kind, component) {
       if (kind === 'reminder') return newReminderForm(component);
@@ -185,22 +191,23 @@ function componentSelect(id, system) {
 function displayView(view) { $$('.page').forEach(p => p.classList.toggle('active', p.id === 'view-' + view)); $$('.nav-item[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view)); const button = $('.nav-item[data-view="' + view + '"]'); $('#breadcrumb-current').textContent = button ? button.textContent.trim().replace(/\s+\d+$/, '') : 'Visão geral'; $('#sidebar').classList.remove('open'); window.scrollTo({ top: 0, behavior: 'smooth' }); if (view === 'veiculo') showVehicle();
   else vehicle?.setActive(false);
   if (view === 'registros') renderRecords(); if (view === 'linha-do-tempo') renderTimeline(); }
-function statusCounts() { return state.records.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {}); }
-function getAttentionCount() { return state.records.filter(r => r.status === 'reprovado' || (r.deadline && r.deadline < today && r.status !== 'aprovado')).length; }
+function statusCounts(records) { return records.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {}); }
 function getAverage() { const full = state.refuels.filter(r => r.full).sort((a, b) => Number(a.odometer) - Number(b.odometer)); if (full.length < 2) return null; const first = full[0], last = full[full.length - 1]; const distance = Number(last.odometer) - Number(first.odometer); const liters = state.refuels.filter(r => Number(r.odometer) > Number(first.odometer) && Number(r.odometer) <= Number(last.odometer)).reduce((sum, r) => sum + Number(r.liters || 0), 0); if (distance <= 0 || liters <= 0) return null; return { value: distance / liters, distance, liters, count: full.length }; }
 function renderDashboard() {
-  const counts = statusCounts(); const average = getAverage();
+  const active = activeRecords(state.records);
+  const currentDate = garageDate();
+  const counts = statusCounts(active); const average = getAverage();
   const odometer = state.odometer === '' || state.odometer == null ? '—' : fmtNumber(state.odometer);
   $('#odo-value').textContent = odometer; $('#metric-odo').innerHTML = odometer + ' <small>km</small>';
   $('#metric-consumption').innerHTML = average ? average.value.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' <small>km/L</small>' : '— <small>km/L</small>';
   $('#consumption-note').textContent = average ? 'Etanol · ' + fmtNumber(average.distance) + ' km em ' + average.count + ' tanques cheios' : 'Precisa de dois tanques cheios registrados';
   $('#metric-approved').innerHTML = (counts.aprovado || 0) + ' <small>aprovadas</small>';
   $('#metric-pending').textContent = (counts.pendente || 0) + (counts.inconclusivo || 0) + (counts.agendado || 0);
-  $('#metric-attention').innerHTML = getAttentionCount() + ' <small>itens</small>';
+  $('#metric-attention').innerHTML = active.filter(r => recordNeedsAttention(r, currentDate)).length + ' <small>itens</small>';
   $('#nav-record-count').textContent = state.records.length;
   const entries = [['Aprovado', counts.aprovado || 0, 'approved'], ['Reprovado', counts.reprovado || 0, 'failed'], ['Inconclusivo', counts.inconclusivo || 0, 'unclear'], ['Pendente', (counts.pendente || 0) + (counts.agendado || 0), 'pending']];
   $('#comparison').innerHTML = entries.map(e => '<div class="compare-cell ' + e[2] + '"><span>' + e[0] + '</span><strong>' + e[1] + '</strong></div>').join('');
-  const priorities = state.records.filter(r => r.status === 'reprovado' || r.status === 'inconclusivo').sort((a, b) => (a.risk === 'alto' ? -1 : 0) - (b.risk === 'alto' ? -1 : 0)).slice(0, 3);
+  const priorities = active.filter(r => recordNeedsAttention(r, currentDate) || r.status === 'inconclusivo').sort((a, b) => (a.risk === 'alto' ? -1 : 0) - (b.risk === 'alto' ? -1 : 0)).slice(0, 3);
   $('#next-steps').innerHTML = priorities.length ? priorities.map(r => '<div class="step-row"><span class="step-mark">!</span><div class="step-copy"><strong>' + escapeHtml(r.title) + '</strong><small>' + escapeHtml(r.nextStep || 'Defina o próximo passo') + '</small>' + componentLink(r.componentId) + '</div><button class="text-button" data-open-record="' + r.id + '">Abrir</button></div>').join('') : '<div class="empty-note">Sem itens críticos. Registre o próximo achado por aqui.</div>';
   const reminders = state.reminders.slice(0, 4);
   $('#reminder-list').innerHTML = reminders.length ? reminders.map(r => '<div class="reminder-item"><span class="reminder-icon">◷</span><div class="reminder-copy"><strong>' + escapeHtml(r.title) + '</strong><small>' + (r.date ? fmtDate(r.date) : r.odometer ? fmtNumber(r.odometer) + ' km' : 'Prazo a definir') + ' · ' + escapeHtml(r.responsible || 'Responsável a definir') + '</small>' + componentLink(r.componentId) + '</div><button class="remove-reminder" data-delete-reminder="' + r.id + '" aria-label="Remover lembrete">×</button></div>').join('') : '<div class="empty-note">Nenhum lembrete cadastrado.</div>';
@@ -257,6 +264,7 @@ function recordForm(record, suggested) {
     field('Tipo de registro', '<select name="kind" aria-label="Tipo de registro">' +
       Object.entries(recordKinds).map(([key, label]) => '<option value="' + key + '"' + (r.kind === key ? ' selected' : '') + '>' + label + '</option>').join('') +
       '</select>') + field('Resultado', '<select name="status" aria-label="Resultado">' + statuses + '</select>') +
+    field('Problema resolvido', '<select name="resolvesRecordId" aria-label="Problema resolvido"></select><span class="form-help">Vincule o problema específico que esta inspeção aprovada ou este serviço resolveu.</span>', true) +
     field('Data', '<input name="date" type="date" value="' + escapeHtml(r.date || today) + '">') + field('Odômetro no registro (km)', '<input name="odometer" type="number" min="0" step="1" value="' + escapeHtml(r.odometer || '') + '" placeholder="Leitura do painel">') +
     field('Risco', '<select name="risk"><option value="baixo" ' + (r.risk === 'baixo' ? 'selected' : '') + '>Baixo</option><option value="médio" ' + (r.risk === 'médio' ? 'selected' : '') + '>Moderado</option><option value="alto" ' + (r.risk === 'alto' ? 'selected' : '') + '>Alto</option></select>') + field('Local', '<select name="location"><option value="" ' + (!r.location ? 'selected' : '') + '>Não definido</option><option ' + (r.location === 'Lins' ? 'selected' : '') + '>Lins</option><option ' + (r.location === 'Bauru' ? 'selected' : '') + '>Bauru</option><option ' + (r.location === 'Outro' ? 'selected' : '') + '>Outro</option></select>') +
     field('Responsável', '<input name="responsible" value="' + escapeHtml(r.responsible || '') + '" placeholder="Proprietário, mecânico…">') + field('Prazo / próxima revisão', '<input name="deadline" type="date" value="' + escapeHtml(r.deadline || '') + '">') + field('Custo estimado (R$)', '<input name="cost" type="number" min="0" step="0.01" value="' + escapeHtml(r.cost || '') + '" placeholder="Opcional">') + field('Origem da informação', '<input name="source" value="' + escapeHtml(r.source || '') + '" placeholder="Relato, nota fiscal, laudo…">') +
@@ -275,6 +283,25 @@ function recordForm(record, suggested) {
     }
     if (select.selectedOptions[0]?.disabled) select.value = '';
   });
+  const targets = form.elements.resolvesRecordId;
+  function updateResolution(selected = targets.value) {
+    const data = new FormData(form);
+    const candidate = {
+      id: r.id, system: data.get('system'), kind: data.get('kind'), status: data.get('status'),
+      componentId: data.get('componentId'), date: data.get('date') || garageDate()
+    };
+    const resolved = problemResolutions(state.records.filter(record => record.id !== r.id));
+    const eligible = state.records.filter(problem =>
+      canResolveProblem(candidate, problem) && (!resolved.has(problem.id) || problem.id === selected));
+    targets.replaceChildren(new Option('Sem vínculo de resolução', ''), ...eligible.map(problem =>
+      new Option(problem.title + (problem.date ? ' · ' + fmtDate(problem.date) : ''), problem.id)));
+    targets.value = eligible.some(problem => problem.id === selected) ? selected : '';
+    targets.disabled = eligible.length === 0;
+  }
+  updateResolution(r.resolvesRecordId);
+  form.addEventListener('change', event => {
+    if (['system', 'componentId', 'kind', 'status', 'date'].includes(event.target.name)) updateResolution();
+  });
   $('#save-form').addEventListener('click', saveRecordForm);
 }
 function field(label, control, full) { return '<div class="form-field ' + (full ? 'full-width' : '') + '"><label>' + label + '</label>' + control + '</div>'; }
@@ -291,12 +318,23 @@ async function saveRecordForm() {
   } catch (_) { showToast('Não consegui enviar a foto. O registro ficou aberto para você tentar de novo.'); return; }
   const r = { id, system: data.get('system'), title: data.get('title').trim(), kind: data.get('kind'), status: data.get('status'), date: data.get('date') || today, odometer: data.get('odometer') || '', observation: data.get('observation').trim(), result: data.get('result').trim(), risk: data.get('risk'), location: data.get('location'), responsible: data.get('responsible').trim(), deadline: data.get('deadline'), cost: data.get('cost'), source: data.get('source').trim(), repair: data.get('repair') === 'on', rollback: data.get('rollback').trim(), nextStep: data.get('nextStep').trim(), photoId };
   if (data.get('componentId')) r.componentId = data.get('componentId');
+  const problem = state.records.find(record => record.id === data.get('resolvesRecordId'));
+  if (canResolveProblem(r, problem)) r.resolvesRecordId = problem.id;
   if (existing && existing.photoId && existing.photoId !== photoId) deletePhoto(existing.photoId);
   if (existing) state.records = state.records.map(x => x.id === id ? r : x); else state.records.unshift(r); if (r.odometer && Number(r.odometer) > Number(state.odometer || 0)) state.odometer = Number(r.odometer); save(); closeModal(); showToast(remoteReady ? 'Registro salvo na garagem.' : 'Registro salvo neste navegador.');
 }
 function openRecordDetail(id) {
   const r = state.records.find(x => x.id === id); if (!r) return; const html = '<div class="form-grid">' + field('Sistema / resultado', '<div>' + escapeHtml(r.system) + '<br>' + badge(r.status) + '</div>') + field('Data / local', '<div>' + fmtDate(r.date) + '<br>' + escapeHtml(r.location || 'Local não definido') + '</div>') + field('Observação', '<div>' + escapeHtml(r.observation || '—') + '</div>', true) + field('Resultado detalhado', '<div>' + escapeHtml(r.result || '—') + '</div>', true) + field('Risco / responsável', '<div>' + riskLabel(r.risk) + ' · ' + escapeHtml(r.responsible || 'Não definido') + '</div>') + field('Custo estimado / prazo', '<div>' + (r.cost ? 'R$ ' + escapeHtml(r.cost) : 'Sem estimativa') + ' · ' + fmtDate(r.deadline) + '</div>') + field('Precisa de reparo?', '<div>' + (r.repair ? 'Sim' : 'Não informado') + '</div>') + field('Rollback / alternativa segura', '<div>' + escapeHtml(r.rollback || '—') + '</div>', true) + field('Próximo passo', '<div>' + escapeHtml(r.nextStep || '—') + '</div>', true) + '</div>' + (r.photoId ? '<div id="photo-detail" class="photo-preview">Carregando foto…</div>' : '');
-  showModal(r.title, 'DETALHE DO REGISTRO', componentLink(r.componentId) + html, '<button class="button secondary" data-action="close-modal">Fechar</button><button class="button primary" data-edit-record="' + id + '">Editar</button>');
+  const resolution = problemResolutions(state.records).get(id);
+  const problem = state.records.find(record => record.id === r.resolvesRecordId);
+  const linked = resolution || (canResolveProblem(r, problem) ? problem : null);
+  const resolutionLink = linked ? '<p>' + (resolution ? 'Resolvido por ' : 'Resolve ') +
+    '<button class="text-button" data-open-record="' + escapeHtml(linked.id) + '">' + escapeHtml(linked.title) + '</button></p>' : '';
+  const resolveButton = r.status === 'reprovado' && !resolution ? '<button class="button secondary" data-resolve-record="' +
+    escapeHtml(id) + '">Registrar resolução</button>' : '';
+  showModal(r.title, 'DETALHE DO REGISTRO', componentLink(r.componentId) + resolutionLink + html,
+    '<button class="button secondary" data-action="close-modal">Fechar</button>' + resolveButton +
+    '<button class="button primary" data-edit-record="' + escapeHtml(id) + '">Editar</button>');
   if (r.photoId) getPhoto(r.photoId).then(blob => { const box = $('#photo-detail'); if (!box) return; if (!blob) { box.textContent = 'Foto indisponível.'; return; } const url = URL.createObjectURL(blob); box.innerHTML = '<img src="' + url + '" alt="Foto do registro"><span>Foto anexada ao registro</span>'; box.querySelector('img').onload = () => URL.revokeObjectURL(url); }).catch(() => {});
 }
 function newFuelForm() {
@@ -352,6 +390,14 @@ function bindEvents() {
     const nav = e.target.closest('[data-view]'); if (nav) return displayView(nav.dataset.view);
     const link = e.target.closest('[data-view-link]'); if (link) return displayView(link.dataset.viewLink);
     const action = e.target.closest('[data-action]'); if (action) { const name = action.dataset.action; if (name === 'new-record') return recordForm(null); if (name === 'new-fuel') return newFuelForm(); if (name === 'new-reminder') return newReminderForm(); if (name === 'edit-odometer') return editOdometer(); if (name === 'close-modal') return closeModal(); if (name === 'backup') return exportBackup(); if (name === 'restore') return $('#restore-file').click(); }
+    const resolve = e.target.closest('[data-resolve-record]');
+    if (resolve) {
+      const problem = state.records.find(r => r.id === resolve.dataset.resolveRecord);
+      if (problem) return recordForm(null, {
+        system: problem.system, componentId: problem.componentId, title: ('Resolução · ' + problem.title).slice(0, 120),
+        kind: 'servico', status: 'aprovado', resolvesRecordId: problem.id
+      });
+    }
     const edit = e.target.closest('[data-edit-record]'); if (edit) { const r = state.records.find(x => x.id === edit.dataset.editRecord); closeModal(); return recordForm(r); }
     const detail = e.target.closest('[data-open-record]'); if (detail) return openRecordDetail(detail.dataset.openRecord);
     const del = e.target.closest('[data-delete-record]'); if (del) return deleteRecord(del.dataset.deleteRecord);

@@ -32,7 +32,7 @@ function partInMode(component, options) {
   return false;
 }
 
-export function createScene(host, { onPick, onHover, onFailure, onRestore, onLabel }) {
+export function createScene(host, { onPick, onHover, onFailure, onRestore, onLabel, sideDoors }) {
   const renderer = new T.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
   const canvas = renderer.domElement;
   canvas.setAttribute('aria-label', 'Modelo interativo. Use o catálogo para selecionar com o teclado.');
@@ -50,7 +50,7 @@ export function createScene(host, { onPick, onHover, onFailure, onRestore, onLab
   }
   const grid = new T.GridHelper(12, 28, 0x324458, 0x243244);
   scene.add(grid);
-  const { root, parts, hinges } = makeFox();
+  const { root, parts, hinges } = makeFox(sideDoors);
   scene.add(root);
   const ray = new T.Raycaster(), pointer = new T.Vector2();
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -189,10 +189,12 @@ export function createScene(host, { onPick, onHover, onFailure, onRestore, onLab
     down = null;
     if (click) { const id = pick(e); if (id) onPick(id); }
   });
-  canvas.addEventListener('webglcontextlost', e => {
-    e.preventDefault(); lost = true; cancelAnimationFrame(frame); frame=0; onFailure();
-  });
-  canvas.addEventListener('webglcontextrestored', () => { lost=false; resize(); invalidate(); onRestore(); });
+  function contextLost(event) {
+    event.preventDefault(); lost = true; cancelAnimationFrame(frame); frame=0; onFailure();
+  }
+  function contextRestored() { lost=false; resize(); invalidate(); onRestore(); }
+  canvas.addEventListener('webglcontextlost', contextLost);
+  canvas.addEventListener('webglcontextrestored', contextRestored);
   controls.addEventListener('start', () => { tween=null; });
   controls.addEventListener('change', invalidate);
   const observer = new ResizeObserver(resize);
@@ -208,7 +210,9 @@ export function createScene(host, { onPick, onHover, onFailure, onRestore, onLab
     dispose() {
       this.setActive(false); observer.disconnect(); controls.dispose();
       for (const m of [...modelMeshes,grid]) { m.geometry.dispose(); m.material.dispose(); }
-      renderer.dispose(); canvas.remove();
+      canvas.removeEventListener('webglcontextlost', contextLost);
+      canvas.removeEventListener('webglcontextrestored', contextRestored);
+      renderer.dispose(); renderer.forceContextLoss(); canvas.remove();
     }
   };
 }

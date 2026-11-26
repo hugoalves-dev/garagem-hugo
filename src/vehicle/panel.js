@@ -1,5 +1,5 @@
 import { activeRecords, componentHistory, statuses } from './status.js';
-import { byId, modes } from './catalog.js';
+import { byId, modes, isRearDoor, isUnconfirmed } from './catalog.js';
 
 export const actions = {
   tarefa: ['Nova tarefa', 'pendente'],
@@ -21,7 +21,9 @@ export function renderPanel(panel, component, state, status, api) {
   }
   const { records, reminders } = componentHistory(state, component.id);
   const current = activeRecords(records);
-  const parent = byId.get(component.parent);
+  const unavailable = state.sideDoors === 2 && isRearDoor(component.id);
+  const optional = isUnconfirmed(component, state.sideDoors);
+  const parent = state.sideDoors === 2 && isRearDoor(component.parent) ? null : byId.get(component.parent);
   const guides = guide(component.system);
   const badge = status => '<span class="vehicle-status"><i data-condition="' + status + '"></i>' + statuses[status][0] + '</span>';
   const row = r => '<li><button class="text-button" data-open-record="' + e(r.id) + '">' +
@@ -32,7 +34,7 @@ export function renderPanel(panel, component, state, status, api) {
     (items.length ? '<ul>' + items.map(row).join('') + '</ul>' : '<p>Nenhum registro.</p>') + '</details>';
   panel.innerHTML = '<div class="vehicle-detail-head"><div><small>' + e(parent?.name || modes[component.mode]) + ' · ' + e(component.system) +
     '</small><h2>' + e(component.name) + '</h2></div><button type="button" class="button secondary" data-vehicle-dismiss aria-label="Fechar detalhes">×</button></div>' +
-    badge(status) + (component.optional ? '<p class="vehicle-note">Presença a confirmar no veículo. Representação ilustrativa.</p>' : '') +
+    badge(status) + (unavailable ? '<p>Peça ausente na configuração de duas portas. O histórico continua disponível.</p>' : optional ? '<p class="vehicle-note">Presença a confirmar no veículo. Representação ilustrativa.</p>' : '') +
     '<div class="vehicle-actions">' + Object.entries(actions).map(([kind,[label]]) =>
       '<button type="button" class="button secondary" data-vehicle-action="' + kind + '">' + label + '</button>').join('') +
     '<button type="button" class="button secondary" data-vehicle-action="history">Consultar histórico</button></div>' +

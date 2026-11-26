@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { components, byId, byMesh } from '../src/vehicle/catalog.js';
-import { componentStatus, componentHistory } from '../src/vehicle/status.js';
+import { componentStatus, componentHistory, activeRecords } from '../src/vehicle/status.js';
 
 test('catálogo tem IDs estáveis e mapeamento único de malhas', () => {
   assert.equal(byId.size, components.length);
@@ -12,10 +12,11 @@ test('catálogo tem IDs estáveis e mapeamento único de malhas', () => {
 test('estado desconhecido, aprovação, falha, reparo e prazos', () => {
   const now = '2026-11-26';
   assert.equal(componentStatus([], [], now), 'unknown');
-  const problem = { status: 'reprovado', kind: 'sintoma', date: '2026-11-25' };
+  const problem = { id: 'failure', status: 'reprovado', kind: 'sintoma', date: '2026-11-25' };
   assert.equal(componentStatus([problem, { status: 'agendado', kind: 'reparo' }], [], now), 'problem');
   const repair = { status: 'aprovado', kind: 'servico', date: now };
-  assert.equal(componentStatus([repair, problem], [], now), 'unknown');
+  assert.equal(componentStatus([repair, problem], [], now), 'problem');
+  assert.equal(componentStatus([{ ...repair, resolvesRecordId: 'failure' }, problem], [], now), 'unknown');
   assert.equal(componentStatus([{ ...repair, kind: 'inspecao' }], [], now), 'approved');
   assert.equal(componentStatus([], [{ date: '2026-11-25' }], now), 'pending');
 });
@@ -52,4 +53,32 @@ test('geometria cobre todos os componentes e as dobradiças carregam os anexos',
   }
   assert.equal(hinges.get('exterior.hood').angle, hinges.get('exterior.washer_nozzles').angle);
   assert.deepEqual(hinges.get('exterior.trunk').point, hinges.get('exterior.window.rear').point);
+});
+
+test('resolução explícita preserva problemas independentes, escopo e histórico', () => {
+  const a = { id: 'a', system: 'Arrefecimento', componentId: 'cooling.expansion_tank', status: 'reprovado', date: '2026-11-24' };
+  const b = { ...a, id: 'b' };
+  const repair = { ...a, id: 'repair', date: '2026-11-26', kind: 'inspecao', status: 'aprovado', resolvesRecordId: 'a' };
+  assert.deepEqual(activeRecords([a,b,repair]), [b,repair]);
+  assert.deepEqual(activeRecords([a,b,{ ...repair, componentId: 'cooling.radiator' }]).slice(0,2), [a,b]);
+  assert.deepEqual(activeRecords([a,b,{ ...repair, date: '2026-11-23' }]).slice(0,2), [a,b]);
+  assert.deepEqual(activeRecords([a,b]), [a,b]);
+  assert.equal(componentStatus([a,b,repair], [], '2026-11-26'), 'problem');
+});
+
+test('carroceria de duas portas usa portas dianteiras mais longas e vidros traseiros fixos', async () => {
+  const { makeFox } = await import('../src/vehicle/model.js');
+  const two = makeFox(2);
+  const four = makeFox(4);
+  for (const side of ['left', 'right']) {
+    const rearDoor = 'exterior.door.rear_' + side;
+    const rearGlass = 'exterior.window.rear_' + side;
+    assert.equal(two.parts.has(rearDoor), false);
+    assert.equal(two.hinges.has(rearDoor), false);
+    assert.ok(four.hinges.has(rearDoor));
+    assert.ok(two.parts.has(rearGlass));
+    assert.equal(two.hinges.has(rearGlass), false);
+    const frontDoor = 'exterior.door.front_' + side;
+    assert.ok(two.parts.get(frontDoor).center.z < four.parts.get(frontDoor).center.z);
+  }
 });

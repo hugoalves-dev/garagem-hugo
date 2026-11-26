@@ -165,10 +165,50 @@ async function run() {
     await find(mobile, 'reservatorio de expansao', 'cooling.expansion_tank');
     await mobile.locator('#vehicle-panel').getByRole('button', { name: title, exact: true }).waitFor();
     await screenshot(mobile, 'fox-mobile.png');
+    const panel = page.locator('#vehicle-panel');
+    await panel.getByRole('button', { name: 'Registrar problema', exact: true }).click();
+    const otherProblem = 'Trinca na tampa';
+    await page.locator('[name=title]').fill(otherProblem);
+    await page.getByRole('button', { name: 'Salvar registro' }).click();
+    await panel.getByText('Problemas ativos (2)', { exact: true }).waitFor();
+    assert.match(await page.locator('#metric-attention').textContent(), /^2 /);
+
+    const resolveProblem = async (name) => {
+      await panel.getByRole('button', { name, exact: true }).click();
+      await page.getByRole('button', { name: 'Registrar resolução' }).click();
+      assert.ok(await page.getByLabel('Problema resolvido').inputValue());
+      await page.getByRole('button', { name: 'Salvar registro' }).click();
+    };
+    await resolveProblem(title);
+    await panel.getByText('Problemas ativos (1)', { exact: true }).waitFor();
+    assert.match(await page.locator('#metric-attention').textContent(), /^1 /);
+    assert.ok(await panel.locator('i[data-condition=problem]').isVisible());
+    assert.ok((await page.locator('#next-steps').textContent()).includes(otherProblem));
+    assert.ok(!(await page.locator('#next-steps').textContent()).includes(title));
+    await resolveProblem(otherProblem);
+    await panel.getByText('Problemas ativos (0)', { exact: true }).waitFor();
+    assert.match(await page.locator('#metric-attention').textContent(), /^0 /);
+    assert.equal(await panel.locator('i[data-condition=problem]').count(), 0);
+    await page.waitForFunction(async () =>
+      (await fetch('/api/state').then(r => r.json())).state.records.filter(r => r.resolvesRecordId).length === 2,
+    );
+
+    await page.getByLabel('Carroceria', { exact: true }).selectOption('2');
+    await page.getByRole('searchbox', { name: 'Buscar peça' }).fill('porta traseira esquerda');
+    await page.getByText('Nenhuma peça encontrada.').waitFor();
+    assert.equal(await page.locator('[data-opening="exterior.door.rear_left"]').isVisible(), false);
+    await page.waitForFunction(async () => (await fetch('/api/state').then(r => r.json())).state.sideDoors === 2);
+    await nav(mobile);
+    await mobile.waitForFunction(() => document.querySelector('#vehicle-doors')?.value === '2');
+    assert.equal(await mobile.getByLabel('Carroceria', { exact: true }).inputValue(), '2');
+    await page.getByLabel('Carroceria', { exact: true }).selectOption('4');
+    await page.locator('[data-select="exterior.door.rear_left"]').waitFor();
     const restore = async (payload) => {
       page.once('dialog', (dialog) => dialog.accept());
       const synced = page.waitForResponse(
-        (r) => r.url().endsWith('/api/state') && r.request().method() === 'PUT' && r.ok(),
+        (r) => r.url().endsWith('/api/state') && r.request().method() === 'PUT' && r.ok() &&
+          r.request().postDataJSON().records.map(record => record.id).join(',') ===
+            payload.state.records.map(record => record.id).join(','),
       );
       await page
         .locator('#restore-file')

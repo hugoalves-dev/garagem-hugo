@@ -14,18 +14,38 @@ export function componentHistory(state, id) {
   };
 }
 
+export function canResolveProblem(resolution, problem) {
+  return Boolean(problem?.id && problem.id !== resolution.id && problem.status === 'reprovado' &&
+    resolution.status === 'aprovado' && ['inspecao', 'servico'].includes(resolution.kind) &&
+    resolution.system === problem.system && (resolution.componentId || '') === (problem.componentId || '') &&
+    (resolution.date || '') >= (problem.date || ''));
+}
+
+export function problemResolutions(records) {
+  const byId = new Map(records.map(record => [record.id, record]));
+  const resolved = new Map();
+  for (const record of records) {
+    if (record.resolvesRecordId && canResolveProblem(record, byId.get(record.resolvesRecordId))) {
+      resolved.set(record.resolvesRecordId, record);
+    }
+  }
+  return resolved;
+}
+
 export function activeRecords(records) {
-  // The current form inserts new records at the front. Stable sorting preserves that order on a tie.
-  const ordered = [...records].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  const resolution = ordered.findIndex(r => r.status === 'aprovado' && ['inspecao', 'servico'].includes(r.kind));
-  return resolution < 0 ? ordered : ordered.filter((record, index) =>
-    index <= resolution || (record.kind !== 'inspecao' && ['pendente', 'agendado', 'inconclusivo'].includes(record.status)));
+  const resolved = problemResolutions(records);
+  return records.filter(record => !resolved.has(record.id));
+}
+
+export function recordNeedsAttention(record, today) {
+  return record.status === 'reprovado' ||
+    Boolean(record.status !== 'aprovado' && record.deadline && record.deadline <= today);
 }
 
 export function componentStatus(records, reminders, today, odometer) {
   const active = activeRecords(records);
   if (active.some(r => r.status === 'reprovado')) return 'problem';
-  if (active.some(r => r.status !== 'aprovado' && r.deadline && r.deadline <= today) ||
+  if (active.some(r => recordNeedsAttention(r, today)) ||
       reminders.some(r => (r.date && r.date <= today) || (r.odometer && odometer !== '' && odometer != null && Number(r.odometer) <= Number(odometer)))) return 'pending';
   if (active.some(r => r.status === 'agendado' && r.kind !== 'melhoria') ||
       reminders.some(r => r.date || r.odometer)) return 'scheduled';

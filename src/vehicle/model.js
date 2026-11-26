@@ -1,12 +1,12 @@
 import * as T from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { byId, components } from './catalog.js';
+import { byId, components, isRearDoor } from './catalog.js';
 
 const paint = 0xb52b37, dark = 0x242d37, metal = 0x8999a5, glass = 0x39586b;
 const sideX = { left: -1, right: 1 };
 const axleZ = { front: 1.18, rear: -1.22 };
 
-export function makeFox() {
+export function makeFox(sideDoors = 4) {
   const root = new T.Group(), parts = new Map(), hinges = new Map();
   function part(id, factory, hinge) {
     const component = byId.get(id);
@@ -167,9 +167,11 @@ export function makeFox() {
       const front = axle === 'front';
       const key = axle + '_' + side;
       const hinge = { point: [x, .92, front ? .75 : -.16], axis: 'y', angle: -sign*1.14 };
-      const start = front ? -.14 : -1.22, end = front ? .74 : -.17;
+      const twoDoors = sideDoors === 2;
+      const start = front ? (twoDoors ? -.44 : -.14) : -1.22;
+      const end = front ? .74 : (twoDoors ? -.47 : -.17);
       const lower = (v, y) => [sign*.881, y, v];
-      part('exterior.door.' + key, ({ panel, box }) => {
+      if (front || !twoDoors) part('exterior.door.' + key, ({ panel, box }) => {
         panel([lower(start, .56), lower(end, .56), lower(end, 1.286), lower(start, 1.286)]);
         box([sign*.891, 1.173, start+.129], [.03, .03, .14], dark);
         box([sign*.887, .727, (start+end)/2], [.028, .047, end-start-.065], 0x30323a);
@@ -179,7 +181,7 @@ export function makeFox() {
           ? [[sign*.86, 1.30, start+.014], [sign*.85, 1.30, end-.027], [sign*.68, 1.818, .223], [sign*.7, 1.826, start+.02]]
           : [[sign*.86, 1.30, start+.022], [sign*.86, 1.30, end-.012], [sign*.708, 1.828, end-.015], [sign*.705, 1.815, start+.07]];
         panel(points, glass); tube([...points, points[0]], .017);
-      }, hinge);
+      }, front || !twoDoors ? hinge : null);
       part('exterior.fender.' + key, ({ panel }) => {
         const width = t => sign * (.885 - .052 * Math.max(0, Math.abs(t-z)-.33));
         for (let i = 0; i < 14; i++) {
@@ -191,6 +193,10 @@ export function makeFox() {
         }
         const endZ = front ? 1.88 : -1.85, archZ = z + (front ? .38 : -.38);
         panel([[width(archZ), .4, archZ], [width(endZ), .54, endZ], [width(endZ), 1.06, endZ], [width(archZ), front ? 1.10 : 1.27, archZ]]);
+        if (!front && twoDoors) {
+          panel([lower(start, .56), lower(end, .56), lower(end, 1.286), lower(start, 1.286)]);
+          panel([[sign*.86,1.285,end], [sign*.70,1.826,end], [sign*.70,1.826,end+.03], [sign*.86,1.285,end+.03]]);
+        }
         if (!front) panel([[sign*.865, 1.285, -1.225], [sign*.676, 1.776, -1.36], [sign*.663, 1.77, -1.45], [sign*.84, 1.21, -1.81]]);
       });
       part('exterior.turn_signal.' + key, ({ box }) => box(
@@ -322,7 +328,7 @@ export function makeFox() {
     for (const x of [-.46,.46]) for (const z of [-1.27,1.044]) ring([x,.408,z],.046,.016,dark,'x');
   });
 
-  for (const c of components) if (!parts.has(c.id)) throw new Error('Componente sem geometria: ' + c.id);
+  for (const c of components) if (!parts.has(c.id) && !(sideDoors === 2 && isRearDoor(c.id))) throw new Error('Componente sem geometria: ' + c.id);
   const bounds = new T.Box3();
   root.updateMatrixWorld(true);
   for (const p of parts.values()) {

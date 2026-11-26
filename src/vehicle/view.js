@@ -1,4 +1,4 @@
-import { components, byId, modes } from './catalog.js';
+import { components, byId, modes, isRearDoor, isUnconfirmed } from './catalog.js';
 import { statusMap, statuses } from './status.js';
 import { renderPanel } from './panel.js';
 export { actions } from './panel.js';
@@ -21,6 +21,8 @@ export function mountVehicle(root, api) {
     '<label>Condição<select id="vehicle-filter"><option value="">Todas as condições</option>' + statusOptions + '</select></label></div>' +
     '<div id="vehicle-list"></div></details><div class="vehicle-workspace">' +
     '<div class="vehicle-toolbar"><label>Modo de inspeção<select id="vehicle-mode">' + selectOptions + '</select></label>' +
+    '<label>Carroceria<select id="vehicle-doors" aria-label="Carroceria"><option value="">A confirmar · prévia de 4 portas</option>' +
+    '<option value="2">2 portas laterais</option><option value="4">4 portas laterais</option></select></label>' +
     '<button type="button" class="button secondary" data-tool="reset" disabled>Centralizar</button>' +
     '<button type="button" class="button secondary" data-tool="fullscreen" disabled>Tela cheia</button></div>' +
     '<div class="vehicle-stage"><div id="vehicle-message" role="status">Carregando modelo 3D…</div>' +
@@ -49,6 +51,7 @@ export function mountVehicle(root, api) {
   function renderList() {
     const query = normal(get('#vehicle-search').value.trim());
     const matching = components.filter(c => {
+      if (options.sideDoors === 2 && isRearDoor(c.id)) return false;
       const haystack = normal(c.name + ' ' + c.system + ' ' + c.id);
       return query.split(/\s+/).every(term => haystack.includes(term)) &&
         (!options.filter || (options.status.get(c.id) || 'unknown') === options.filter);
@@ -56,9 +59,10 @@ export function mountVehicle(root, api) {
     const button = c => {
       const condition = options.status.get(c.id) || 'unknown';
       const [status] = statuses[condition];
+      const optional = isUnconfirmed(c, api.state().sideDoors);
       return '<button type="button" data-select="' + c.id + '" aria-pressed="' + (c.id === options.selected) +
-        '"><i data-condition="' + condition + '" title="' + status + '"></i>' + e(c.name) + (c.optional ? '<span class="vehicle-optional" title="Presença a confirmar">?</span>' : '') +
-        '<span class="vehicle-sr"> · ' + (c.optional ? 'Presença a confirmar · ' : '') + status + '</span></button>';
+        '"><i data-condition="' + condition + '" title="' + status + '"></i>' + e(c.name) + (optional ? '<span class="vehicle-optional" title="Presença a confirmar">?</span>' : '') +
+        '<span class="vehicle-sr"> · ' + (optional ? 'Presença a confirmar · ' : '') + status + '</span></button>';
     };
     list.innerHTML = Object.entries(modes).slice(1).map(([key,name]) => {
       const entries = matching.filter(c => c.mode === key);
@@ -71,6 +75,27 @@ export function mountVehicle(root, api) {
   }
   function refresh() {
     const state = api.state();
+    const sideDoors = state.sideDoors === 2 ? 2 : 4;
+    const rebuild = scene && options.sideDoors !== sideDoors;
+    options.sideDoors = sideDoors;
+    get('#vehicle-doors').value = [2, 4].includes(state.sideDoors) ? String(state.sideDoors) : '';
+    for (const input of root.querySelectorAll('[data-opening]')) {
+      const unavailable = sideDoors === 2 && isRearDoor(input.dataset.opening);
+      input.closest('label').hidden = unavailable;
+      if (unavailable) setOpening(input.dataset.opening, false);
+    }
+    if (sideDoors === 2 && isRearDoor(options.selected)) {
+      options.isolate = false;
+      get('[data-toggle="isolate"]').checked = false;
+    }
+    if (rebuild) {
+      scene.dispose();
+      scene = null;
+      loading = null;
+      message.textContent = 'Carregando modelo 3D…';
+      message.hidden = false;
+      start();
+    }
     options.status = statusMap(state, api.today());
     const open = new Set([...list.querySelectorAll('details[open]')].map(el => el.dataset.category));
     const focusedId = document.activeElement?.dataset.select;
@@ -134,6 +159,7 @@ export function mountVehicle(root, api) {
     if (loading) return;
     loading = import('./scene.js').then(({ createScene }) => {
       scene = createScene(stage, {
+        sideDoors: options.sideDoors,
         onPick: id => select(id,true),
         onHover: id => { get('#vehicle-hover').textContent = byId.get(id)?.name || ''; },
         onFailure: () => fallback('A conexão com o WebGL foi interrompida. Continue pelo catálogo.'),
@@ -150,6 +176,7 @@ export function mountVehicle(root, api) {
   root.addEventListener('input', event => { if (event.target.id === 'vehicle-search') refresh(); });
   root.addEventListener('change', event => {
     const { id, value, checked, dataset } = event.target;
+    if (id === 'vehicle-doors') return api.setSideDoors(value ? Number(value) : null);
     if (!['vehicle-mode', 'vehicle-filter'].includes(id) && !dataset.toggle && !dataset.group && !dataset.opening) return;
     if (id === 'vehicle-mode') {
       setMode(value); options.selected = null; options.isolate = false;
@@ -157,7 +184,7 @@ export function mountVehicle(root, api) {
     }
     if (id === 'vehicle-filter') options.filter = value;
     if (dataset.toggle) {
-      if (dataset.toggle === 'isolate' && !options.selected) { event.target.checked = false; api.toast('Selecione uma peça para isolá-la.'); return; }
+      if (dataset.toggle === 'isolate' && (!options.selected || (options.sideDoors === 2 && isRearDoor(options.selected)))) { event.target.checked = false; api.toast('Selecione uma peça para isolá-la.'); return; }
       options[dataset.toggle] = checked;
     }
     if (dataset.group) options.hidden[checked ? 'delete' : 'add'](dataset.group);

@@ -99,3 +99,14 @@ batch('underbody', 'underside', [
 
 export const byId = new Map(components.map(c => [c.id, c]));
 export const byMesh = new Map(components.flatMap(c => c.meshes.map(mesh => [mesh, c])));
+
+export function isRearDoor(id) {
+  return id?.startsWith('exterior.door.rear_') || false;
+}
+
+export function isUnconfirmed(component, sideDoors) {
+  if (sideDoors === 2 || sideDoors === 4) {
+    if (isRearDoor(component.id) || isRearDoor(component.parent)) return false;
+  }
+  return component.optional;
+}
