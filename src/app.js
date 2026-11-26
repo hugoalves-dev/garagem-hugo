@@ -1,7 +1,15 @@
+import { activeRecords, canResolveProblem, problemResolutions, recordNeedsAttention } from './vehicle/status.js';
+import { components, byId } from './vehicle/catalog.js';
+
 const STORE_KEY = 'fox-em-dia-v1';
 const DB_NAME = 'fox-em-dia-local';
 const DB_STORE = 'photos';
-const today = new Date().toISOString().slice(0, 10);
+const garageDate = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+const today = garageDate();
+const recordKinds = {
+  inspecao: 'Inspeção', sintoma: 'Sintoma / problema', servico: 'Serviço realizado', tarefa: 'Tarefa',
+  reparo: 'Reparo planejado', substituicao: 'Substituição planejada', melhoria: 'Melhoria planejada'
+};
 const statusLabels = { pendente: 'Pendente', aprovado: 'Aprovado', reprovado: 'Reprovado', inconclusivo: 'Inconclusivo', agendado: 'Agendado' };
 const iconByType = { 'Motor e versão': '⚙', 'ABS e freios': '◉', 'Airbag': '◇', 'Injeção / EPC': '⚡', 'Correia dentada': '⟳', 'Carroceria / ferrugem': '▧', 'Chassi e identificação': '▤', 'Câmbio e embreagem': '⇄', 'Suspensão e direção': '⌁', 'Arrefecimento': '♨', 'Ar-condicionado': '❄', 'Limpadores e esguicho': '⌁', 'Rádio e acessórios': '♫', 'Alarme / elétrica': '⌑', 'OBD2 / scanner': '⌕', 'Documentação': '▣', 'Pneus e rodas': '◉', 'Iluminação': '☼', 'Sintoma geral': '!', 'Abastecimento': '⛽', 'Serviço': '✓' };
 const systemGroups = ['Motor e versão', 'ABS e freios', 'Airbag', 'Injeção / EPC', 'Correia dentada', 'Carroceria / ferrugem', 'Chassi e identificação', 'Câmbio e embreagem', 'Suspensão e direção', 'Arrefecimento', 'Ar-condicionado', 'Limpadores e esguicho', 'Rádio e acessórios', 'Alarme / elétrica', 'OBD2 / scanner', 'Documentação', 'Pneus e rodas', 'Iluminação', 'Sintoma geral'];
@@ -135,36 +143,90 @@ async function uploadPhoto(id, blob) {
   if (!response.ok) throw new Error('photo upload failed');
 }
 function showToast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2400); }
-function displayView(view) { $$('.page').forEach(p => p.classList.toggle('active', p.id === 'view-' + view)); $$('.nav-item[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view)); const button = $('.nav-item[data-view="' + view + '"]'); $('#breadcrumb-current').textContent = button ? button.textContent.trim().replace(/\s+\d+$/, '') : 'Visão geral'; $('#sidebar').classList.remove('open'); window.scrollTo({ top: 0, behavior: 'smooth' }); if (view === 'registros') renderRecords(); if (view === 'linha-do-tempo') renderTimeline(); }
-function statusCounts() { return state.records.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {}); }
-function getAttentionCount() { return state.records.filter(r => r.status === 'reprovado' || (r.deadline && r.deadline < today && r.status !== 'aprovado')).length; }
+let vehicle, vehicleModule;
+function showVehicle(id) {
+  vehicleModule ??= import('./vehicle/view.js').then(({ mountVehicle, actions }) => mountVehicle($('#view-veiculo'), {
+    state: () => state,
+    setSideDoors(value) {
+      state.sideDoors = value;
+      save();
+    },
+    today: garageDate, escape: escapeHtml, formatDate: fmtDate, toast: showToast,
+    guide: system => [...homeTests, ...proTests].filter(g => g.system === system),
+    action(kind, component) {
+      if (kind === 'reminder') return newReminderForm(component);
+      const [label, status] = actions[kind];
+      recordForm(null, {
+        componentId: component.id, system: component.system, title: label + ' · ' + component.name,
+        kind: kind === 'photo' ? 'inspecao' : kind, status: status || 'pendente', photoRequired: kind === 'photo'
+      });
+    }
+  })).catch(() => {
+    vehicleModule = null;
+    $('#view-veiculo').textContent = 'Não foi possível carregar o catálogo. Abra Veículo 3D para tentar novamente.';
+    return null;
+  });
+  vehicleModule.then(view => {
+    if (!view) return;
+    vehicle = view;
+    vehicle.setActive($('#view-veiculo').classList.contains('active'));
+    if (id) vehicle.select(id);
+  });
+}
+function componentLabel(id) { return byId.get(id)?.name || ''; }
+function componentLink(id) {
+  const name = componentLabel(id);
+  return name ? '<button type="button" class="text-button" data-open-component="' + escapeHtml(id) + '">' + escapeHtml(name) + ' · Ver no 3D</button>' : '';
+}
+function componentSelect(id, system) {
+  const known = byId.get(id);
+  const entries = components.map(c => {
+    const hidden = system && c.system !== system && c.id !== id;
+    return '<option value="' + c.id + '"' + (c.id === id ? ' selected' : '') + (hidden ? ' hidden disabled' : '') + '>' + escapeHtml(c.name) + '</option>';
+  }).join('');
+  const extra = id && !known ? '<option selected value="' + escapeHtml(id) + '">Peça de outra versão do catálogo</option>' : '';
+  return '<select name="componentId" aria-label="Peça">' + '<option value="">Sem peça vinculada</option>' + entries + extra + '</select>';
+}
+
+function displayView(view) { $$('.page').forEach(p => p.classList.toggle('active', p.id === 'view-' + view)); $$('.nav-item[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view)); const button = $('.nav-item[data-view="' + view + '"]'); $('#breadcrumb-current').textContent = button ? button.textContent.trim().replace(/\s+\d+$/, '') : 'Visão geral'; $('#sidebar').classList.remove('open'); window.scrollTo({ top: 0, behavior: 'smooth' }); if (view === 'veiculo') showVehicle();
+  else vehicle?.setActive(false);
+  if (view === 'registros') renderRecords(); if (view === 'linha-do-tempo') renderTimeline(); }
+function statusCounts(records) { return records.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {}); }
 function getAverage() { const full = state.refuels.filter(r => r.full).sort((a, b) => Number(a.odometer) - Number(b.odometer)); if (full.length < 2) return null; const first = full[0], last = full[full.length - 1]; const distance = Number(last.odometer) - Number(first.odometer); const liters = state.refuels.filter(r => Number(r.odometer) > Number(first.odometer) && Number(r.odometer) <= Number(last.odometer)).reduce((sum, r) => sum + Number(r.liters || 0), 0); if (distance <= 0 || liters <= 0) return null; return { value: distance / liters, distance, liters, count: full.length }; }
 function renderDashboard() {
-  const counts = statusCounts(); const average = getAverage();
+  const active = activeRecords(state.records);
+  const currentDate = garageDate();
+  const counts = statusCounts(active); const average = getAverage();
   const odometer = state.odometer === '' || state.odometer == null ? '—' : fmtNumber(state.odometer);
   $('#odo-value').textContent = odometer; $('#metric-odo').innerHTML = odometer + ' <small>km</small>';
   $('#metric-consumption').innerHTML = average ? average.value.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' <small>km/L</small>' : '— <small>km/L</small>';
   $('#consumption-note').textContent = average ? 'Etanol · ' + fmtNumber(average.distance) + ' km em ' + average.count + ' tanques cheios' : 'Precisa de dois tanques cheios registrados';
   $('#metric-approved').innerHTML = (counts.aprovado || 0) + ' <small>aprovadas</small>';
   $('#metric-pending').textContent = (counts.pendente || 0) + (counts.inconclusivo || 0) + (counts.agendado || 0);
-  $('#metric-attention').innerHTML = getAttentionCount() + ' <small>itens</small>';
+  $('#metric-attention').innerHTML = active.filter(r => recordNeedsAttention(r, currentDate)).length + ' <small>itens</small>';
   $('#nav-record-count').textContent = state.records.length;
   const entries = [['Aprovado', counts.aprovado || 0, 'approved'], ['Reprovado', counts.reprovado || 0, 'failed'], ['Inconclusivo', counts.inconclusivo || 0, 'unclear'], ['Pendente', (counts.pendente || 0) + (counts.agendado || 0), 'pending']];
   $('#comparison').innerHTML = entries.map(e => '<div class="compare-cell ' + e[2] + '"><span>' + e[0] + '</span><strong>' + e[1] + '</strong></div>').join('');
-  const priorities = state.records.filter(r => r.status === 'reprovado' || r.status === 'inconclusivo').sort((a, b) => (a.risk === 'alto' ? -1 : 0) - (b.risk === 'alto' ? -1 : 0)).slice(0, 3);
-  $('#next-steps').innerHTML = priorities.length ? priorities.map(r => '<div class="step-row"><span class="step-mark">!</span><div class="step-copy"><strong>' + escapeHtml(r.title) + '</strong><small>' + escapeHtml(r.nextStep || 'Defina o próximo passo') + '</small></div><button class="text-button" data-open-record="' + r.id + '">Abrir</button></div>').join('') : '<div class="empty-note">Sem itens críticos. Registre o próximo achado por aqui.</div>';
+  const priorities = active.filter(r => recordNeedsAttention(r, currentDate) || r.status === 'inconclusivo').sort((a, b) => (a.risk === 'alto' ? -1 : 0) - (b.risk === 'alto' ? -1 : 0)).slice(0, 3);
+  $('#next-steps').innerHTML = priorities.length ? priorities.map(r => '<div class="step-row"><span class="step-mark">!</span><div class="step-copy"><strong>' + escapeHtml(r.title) + '</strong><small>' + escapeHtml(r.nextStep || 'Defina o próximo passo') + '</small>' + componentLink(r.componentId) + '</div><button class="text-button" data-open-record="' + r.id + '">Abrir</button></div>').join('') : '<div class="empty-note">Sem itens críticos. Registre o próximo achado por aqui.</div>';
   const reminders = state.reminders.slice(0, 4);
-  $('#reminder-list').innerHTML = reminders.length ? reminders.map(r => '<div class="reminder-item"><span class="reminder-icon">◷</span><div class="reminder-copy"><strong>' + escapeHtml(r.title) + '</strong><small>' + (r.date ? fmtDate(r.date) : r.odometer ? fmtNumber(r.odometer) + ' km' : 'Prazo a definir') + ' · ' + escapeHtml(r.responsible || 'Responsável a definir') + '</small></div><button class="remove-reminder" data-delete-reminder="' + r.id + '" aria-label="Remover lembrete">×</button></div>').join('') : '<div class="empty-note">Nenhum lembrete cadastrado.</div>';
+  $('#reminder-list').innerHTML = reminders.length ? reminders.map(r => '<div class="reminder-item"><span class="reminder-icon">◷</span><div class="reminder-copy"><strong>' + escapeHtml(r.title) + '</strong><small>' + (r.date ? fmtDate(r.date) : r.odometer ? fmtNumber(r.odometer) + ' km' : 'Prazo a definir') + ' · ' + escapeHtml(r.responsible || 'Responsável a definir') + '</small>' + componentLink(r.componentId) + '</div><button class="remove-reminder" data-delete-reminder="' + r.id + '" aria-label="Remover lembrete">×</button></div>').join('') : '<div class="empty-note">Nenhum lembrete cadastrado.</div>';
   const recent = [...state.records].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 5);
-  $('#recent-list').innerHTML = recent.length ? recent.map(r => '<div class="recent-row"><span class="recent-symbol">' + (iconByType[r.system] || '▤') + '</span><div><strong>' + escapeHtml(r.title) + '</strong><small>' + fmtDate(r.date) + ' · ' + escapeHtml(r.location || 'local não definido') + '</small></div>' + badge(r.status) + '</div>').join('') : '<div class="empty-note">Ainda não há registros.</div>';
+  $('#recent-list').innerHTML = recent.length ? recent.map(r => '<div class="recent-row"><span class="recent-symbol">' + (iconByType[r.system] || '▤') + '</span><div><strong>' + escapeHtml(r.title) + '</strong><small>' + fmtDate(r.date) + ' · ' + escapeHtml(r.location || 'local não definido') + '</small>' + componentLink(r.componentId) + '</div>' + badge(r.status) + '</div>').join('') : '<div class="empty-note">Ainda não há registros.</div>';
   $('#quick-list').innerHTML = homeTests.slice(0, 4).map(t => '<div class="quick-item"><i>✓</i><span>' + escapeHtml(t.title) + '</span></div>').join('');
 }
 function fillSystemFilter() { const sel = $('#filter-system'); if (!sel) return; const current = sel.value; sel.innerHTML = '<option value="">Todos os sistemas</option>' + systemGroups.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join(''); sel.value = current; }
 function renderRecords() {
-  fillSystemFilter(); const term = ($('#record-search').value || '').toLowerCase(); const system = $('#filter-system').value; const status = $('#filter-status').value; const location = $('#filter-location').value;
-  const items = [...state.records].filter(r => (!system || r.system === system) && (!status || r.status === status) && (!location || (location === 'Outro' ? !['Lins', 'Bauru'].includes(r.location) : r.location === location)) && (!term || [r.title, r.system, r.observation, r.nextStep, r.result].join(' ').toLowerCase().includes(term))).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  fillSystemFilter();
+  const sel = $('#filter-component');
+  const component = sel.value;
+  const ids = new Set(state.records.map(r => r.componentId));
+  sel.replaceChildren(new Option('Todas as peças', ''), ...components.filter(c => ids.has(c.id)).map(c => new Option(c.name, c.id)));
+  sel.value = ids.has(component) && byId.has(component) ? component : '';
+  const term = ($('#record-search').value || '').toLowerCase(); const system = $('#filter-system').value; const status = $('#filter-status').value; const location = $('#filter-location').value;
+  const items = [...state.records].filter(r => (!sel.value || r.componentId === sel.value) && (!system || r.system === system) && (!status || r.status === status) && (!location || (location === 'Outro' ? !['Lins', 'Bauru'].includes(r.location) : r.location === location)) && (!term || [r.title, r.system, r.observation, r.nextStep, r.result, componentLabel(r.componentId)].join(' ').toLowerCase().includes(term))).sort((a, b) => String(b.date).localeCompare(String(a.date)));
   $('#record-summary').textContent = items.length + ' de ' + state.records.length + ' registros · Aprovado, reprovado e inconclusivo contam apenas quando há evidência registrada.';
-  $('#record-grid').innerHTML = items.length ? items.map(r => '<article class="record-card"><div class="record-card-top"><span class="record-icon">' + (iconByType[r.system] || '▤') + '</span><div class="record-title"><strong>' + escapeHtml(r.title) + '</strong><small>' + escapeHtml(r.system) + ' · ' + fmtDate(r.date) + '</small></div>' + badge(r.status) + '</div><p class="record-description">' + escapeHtml(r.observation || r.nextStep || 'Sem observação.') + '</p><div class="record-meta"><span>⌖ ' + escapeHtml(r.location || 'Local não definido') + '</span><span>⚑ ' + riskLabel(r.risk) + '</span><span>♙ ' + escapeHtml(r.responsible || 'Sem responsável') + '</span>' + (r.cost ? '<span>R$ ' + escapeHtml(r.cost) + '</span>' : '') + (r.photoId ? '<span>▧ Foto</span>' : '') + '</div><div class="record-actions"><button data-open-record="' + r.id + '">Detalhes</button><button data-edit-record="' + r.id + '">Editar</button><button class="danger" data-delete-record="' + r.id + '">Excluir</button></div></article>').join('') : '<div class="empty-state no-results"><strong>Nenhum registro encontrado</strong>Ajuste os filtros ou crie um novo registro.</div>';
+  $('#record-grid').innerHTML = items.length ? items.map(r => '<article class="record-card"><div class="record-card-top"><span class="record-icon">' + (iconByType[r.system] || '▤') + '</span><div class="record-title"><strong>' + escapeHtml(r.title) + '</strong><small>' + escapeHtml(r.system) + ' · ' + fmtDate(r.date) + '</small></div>' + badge(r.status) + '</div>' + componentLink(r.componentId) + '<p class="record-description">' + escapeHtml(r.observation || r.nextStep || 'Sem observação.') + '</p><div class="record-meta"><span>⌖ ' + escapeHtml(r.location || 'Local não definido') + '</span><span>⚑ ' + riskLabel(r.risk) + '</span><span>♙ ' + escapeHtml(r.responsible || 'Sem responsável') + '</span>' + (r.cost ? '<span>R$ ' + escapeHtml(r.cost) + '</span>' : '') + (r.photoId ? '<span>▧ Foto</span>' : '') + '</div><div class="record-actions"><button data-open-record="' + r.id + '">Detalhes</button><button data-edit-record="' + r.id + '">Editar</button><button class="danger" data-delete-record="' + r.id + '">Excluir</button></div></article>').join('') : '<div class="empty-state no-results"><strong>Nenhum registro encontrado</strong>Ajuste os filtros ou crie um novo registro.</div>';
 }
 function renderGuides() {
   $('#home-tests').innerHTML = homeTests.map((t, i) => guideCard(t, i, false)).join('');
@@ -180,34 +242,66 @@ function renderFuel() {
 }
 function renderTimeline() {
   const filter = $('#timeline-filter').value; const entries = [];
-  state.records.forEach(r => { if (!filter || (filter === 'servico' ? r.kind === 'servico' : filter === 'inspecao' ? r.kind !== 'servico' : false)) entries.push({ date: r.date, type: r.kind === 'servico' ? 'servico' : 'inspecao', title: r.title, sub: r.system + ' · ' + (r.location || 'local não definido'), body: r.observation || r.nextStep, status: r.status }); });
+  state.records.forEach(r => { if (!filter || (filter === 'servico' ? r.kind === 'servico' : filter === 'inspecao' ? r.kind !== 'servico' : false)) entries.push({ date: r.date, componentId: r.componentId, type: r.kind === 'servico' ? 'servico' : 'inspecao', title: r.title, sub: r.system + ' · ' + (r.location || 'local não definido'), body: r.observation || r.nextStep, status: r.status }); });
   state.refuels.forEach(r => { if (!filter || filter === 'abastecimento') entries.push({ date: r.date, type: 'abastecimento', title: 'Abastecimento de etanol', sub: fmtNumber(r.odometer) + ' km · ' + Number(r.liters).toLocaleString('pt-BR') + ' L', body: r.note, status: 'aprovado' }); });
-  state.reminders.forEach(r => { if (!filter || filter === 'lembrete') entries.push({ date: r.date || today, type: 'lembrete', title: r.title, sub: 'Lembrete · ' + (r.responsible || 'Responsável a definir'), body: r.note || r.odometer ? (r.note || 'Meta: ' + fmtNumber(r.odometer) + ' km') : 'Prazo a definir', status: 'agendado' }); });
+  state.reminders.forEach(r => { if (!filter || filter === 'lembrete') entries.push({ date: r.date || today, componentId: r.componentId, type: 'lembrete', title: r.title, sub: 'Lembrete · ' + (r.responsible || 'Responsável a definir'), body: r.note || r.odometer ? (r.note || 'Meta: ' + fmtNumber(r.odometer) + ' km') : 'Prazo a definir', status: 'agendado' }); });
   entries.sort((a, b) => String(b.date).localeCompare(String(a.date))); $('#timeline-count').textContent = entries.length + ' eventos';
-  let html = '', lastDate = ''; entries.forEach(e => { if (e.date !== lastDate) { lastDate = e.date; html += '<div class="timeline-date">' + fmtDate(e.date) + '</div>'; } html += '<article class="timeline-entry"><div class="timeline-entry-head"><span class="record-icon">' + (iconByType[e.type === 'abastecimento' ? 'Abastecimento' : e.type === 'servico' ? 'Serviço' : 'Sintoma geral']) + '</span><strong>' + escapeHtml(e.title) + '</strong>' + badge(e.status) + '</div><small>' + escapeHtml(e.sub) + '</small>' + (e.body ? '<p>' + escapeHtml(e.body) + '</p>' : '') + '</article>'; });
+  let html = '', lastDate = ''; entries.forEach(e => { if (e.date !== lastDate) { lastDate = e.date; html += '<div class="timeline-date">' + fmtDate(e.date) + '</div>'; } html += '<article class="timeline-entry"><div class="timeline-entry-head"><span class="record-icon">' + (iconByType[e.type === 'abastecimento' ? 'Abastecimento' : e.type === 'servico' ? 'Serviço' : 'Sintoma geral']) + '</span><strong>' + escapeHtml(e.title) + '</strong>' + badge(e.status) + '</div><small>' + escapeHtml(e.sub) + '</small>' + componentLink(e.componentId) + (e.body ? '<p>' + escapeHtml(e.body) + '</p>' : '') + '</article>'; });
   $('#timeline').innerHTML = html || '<div class="empty-state"><strong>Sem eventos para esse filtro</strong>Seus próximos registros aparecerão aqui.</div>';
 }
-function renderAll() { renderDashboard(); renderRecords(); renderGuides(); renderFuel(); renderTimeline(); }
+function renderAll() { renderDashboard(); renderRecords(); renderGuides(); renderFuel(); renderTimeline(); vehicle?.refresh(); }
 
 function showModal(title, eyebrow, html, actions) { $('#modal-title').textContent = title; $('#modal-eyebrow').textContent = eyebrow; $('#modal-content').innerHTML = html; $('#modal-actions').innerHTML = actions; $('#modal-backdrop').hidden = false; document.body.style.overflow = 'hidden'; }
 function closeModal() { $('#modal-backdrop').hidden = true; $('#modal-content').innerHTML = ''; document.body.style.overflow = ''; }
 const cancelButton = '<button class="button secondary" data-action="close-modal">Cancelar</button>';
-const saveButton = '<button class="button primary" id="save-form">Salvar registro</button>';
 function recordForm(record, suggested) {
-  const r = record || makeRecord(suggested && suggested.system || systemGroups[0], suggested && suggested.title || '', 'pendente', {});
+  const r = record || makeRecord(suggested?.system || systemGroups[0], suggested?.title || '', suggested?.status || 'pendente', suggested);
   const systems = systemGroups.map(s => '<option ' + (r.system === s ? 'selected' : '') + '>' + escapeHtml(s) + '</option>').join('');
   const statuses = Object.entries(statusLabels).map(([k, v]) => '<option value="' + k + '" ' + (r.status === k ? 'selected' : '') + '>' + v + '</option>').join('');
   const html = '<form id="record-form"><input type="hidden" name="id" value="' + escapeHtml(r.id) + '"><input type="hidden" name="existingPhoto" value="' + escapeHtml(r.photoId || '') + '"><div class="form-grid">' +
     field('Sistema', '<select name="system" required>' + systems + '</select>') + field('Item / título', '<input name="title" required maxlength="120" value="' + escapeHtml(r.title) + '" placeholder="Ex.: luz EPC acesa">') +
-    field('Tipo de registro', '<select name="kind"><option value="inspecao" ' + (r.kind === 'inspecao' ? 'selected' : '') + '>Inspeção</option><option value="sintoma" ' + (r.kind === 'sintoma' ? 'selected' : '') + '>Sintoma</option><option value="servico" ' + (r.kind === 'servico' ? 'selected' : '') + '>Serviço realizado</option></select>') + field('Resultado', '<select name="status">' + statuses + '</select>') +
+    field('Peça vinculada', componentSelect(r.componentId, r.system)) +
+    field('Tipo de registro', '<select name="kind" aria-label="Tipo de registro">' +
+      Object.entries(recordKinds).map(([key, label]) => '<option value="' + key + '"' + (r.kind === key ? ' selected' : '') + '>' + label + '</option>').join('') +
+      '</select>') + field('Resultado', '<select name="status" aria-label="Resultado">' + statuses + '</select>') +
+    field('Problema resolvido', '<select name="resolvesRecordId" aria-label="Problema resolvido"></select><span class="form-help">Vincule o problema específico que esta inspeção aprovada ou este serviço resolveu.</span>', true) +
     field('Data', '<input name="date" type="date" value="' + escapeHtml(r.date || today) + '">') + field('Odômetro no registro (km)', '<input name="odometer" type="number" min="0" step="1" value="' + escapeHtml(r.odometer || '') + '" placeholder="Leitura do painel">') +
     field('Risco', '<select name="risk"><option value="baixo" ' + (r.risk === 'baixo' ? 'selected' : '') + '>Baixo</option><option value="médio" ' + (r.risk === 'médio' ? 'selected' : '') + '>Moderado</option><option value="alto" ' + (r.risk === 'alto' ? 'selected' : '') + '>Alto</option></select>') + field('Local', '<select name="location"><option value="" ' + (!r.location ? 'selected' : '') + '>Não definido</option><option ' + (r.location === 'Lins' ? 'selected' : '') + '>Lins</option><option ' + (r.location === 'Bauru' ? 'selected' : '') + '>Bauru</option><option ' + (r.location === 'Outro' ? 'selected' : '') + '>Outro</option></select>') +
     field('Responsável', '<input name="responsible" value="' + escapeHtml(r.responsible || '') + '" placeholder="Proprietário, mecânico…">') + field('Prazo / próxima revisão', '<input name="deadline" type="date" value="' + escapeHtml(r.deadline || '') + '">') + field('Custo estimado (R$)', '<input name="cost" type="number" min="0" step="0.01" value="' + escapeHtml(r.cost || '') + '" placeholder="Opcional">') + field('Origem da informação', '<input name="source" value="' + escapeHtml(r.source || '') + '" placeholder="Relato, nota fiscal, laudo…">') +
     field('Observação / sintomas', '<textarea name="observation" placeholder="Condição, quando ocorre, evidência…">' + escapeHtml(r.observation || '') + '</textarea>', true) + field('Resultado detalhado', '<textarea name="result" placeholder="O que foi observado ou medido?">' + escapeHtml(r.result || '') + '</textarea>', true) +
-    field('Precisa de reparo?', '<label class="check-field"><input type="checkbox" name="repair" ' + (r.repair ? 'checked' : '') + '> Sim, precisa de reparo ou diagnóstico</label>') + field('Foto (opcional)', '<input type="file" name="photo" accept="image/jpeg,image/png,image/webp"><span class="form-help">A foto fica no armazenamento privado da garagem. Evite enviar documentos com dados pessoais.</span>' + (r.photoId ? '<span class="form-help">Este registro já tem uma foto salva.</span>' : '')) +
+    field('Precisa de reparo?', '<label class="check-field"><input type="checkbox" name="repair" ' + (r.repair ? 'checked' : '') + '> Sim, precisa de reparo ou diagnóstico</label>') + field(r.photoRequired ? 'Foto' : 'Foto (opcional)', '<input type="file" name="photo" aria-label="Foto" accept="image/jpeg,image/png,image/webp"' + (r.photoRequired ? ' required' : '') + '><span class="form-help">A foto fica no armazenamento privado da garagem. Evite enviar documentos com dados pessoais.</span>' + (r.photoId ? '<span class="form-help">Este registro já tem uma foto salva.</span>' : '')) +
     field('Rollback ou alternativa segura', '<textarea name="rollback" placeholder="Como retornar ao estado anterior ou manter o carro seguro enquanto aguarda?">' + escapeHtml(r.rollback || '') + '</textarea>', true) + field('Próximo passo', '<textarea name="nextStep" placeholder="Ação concreta, responsável e evidência esperada">' + escapeHtml(r.nextStep || '') + '</textarea>', true) +
     '</div></form>';
   showModal(record ? 'Editar registro' : 'Novo registro', 'INSPEÇÃO · SINTOMA · SERVIÇO', html, cancelButton + '<button class="button primary" id="save-form">Salvar registro</button>');
+  const form = $('#record-form');
+  form.elements.system.addEventListener('change', () => {
+    const select = form.elements.componentId;
+    const nextSystem = form.elements.system.value;
+    for (const option of select.options) {
+      const component = byId.get(option.value);
+      option.hidden = option.disabled = Boolean(component && component.system !== nextSystem);
+    }
+    if (select.selectedOptions[0]?.disabled) select.value = '';
+  });
+  const targets = form.elements.resolvesRecordId;
+  function updateResolution(selected = targets.value) {
+    const data = new FormData(form);
+    const candidate = {
+      id: r.id, system: data.get('system'), kind: data.get('kind'), status: data.get('status'),
+      componentId: data.get('componentId'), date: data.get('date') || garageDate()
+    };
+    const resolved = problemResolutions(state.records.filter(record => record.id !== r.id));
+    const eligible = state.records.filter(problem =>
+      canResolveProblem(candidate, problem) && (!resolved.has(problem.id) || problem.id === selected));
+    targets.replaceChildren(new Option('Sem vínculo de resolução', ''), ...eligible.map(problem =>
+      new Option(problem.title + (problem.date ? ' · ' + fmtDate(problem.date) : ''), problem.id)));
+    targets.value = eligible.some(problem => problem.id === selected) ? selected : '';
+    targets.disabled = eligible.length === 0;
+  }
+  updateResolution(r.resolvesRecordId);
+  form.addEventListener('change', event => {
+    if (['system', 'componentId', 'kind', 'status', 'date'].includes(event.target.name)) updateResolution();
+  });
   $('#save-form').addEventListener('click', saveRecordForm);
 }
 function field(label, control, full) { return '<div class="form-field ' + (full ? 'full-width' : '') + '"><label>' + label + '</label>' + control + '</div>'; }
@@ -223,23 +317,35 @@ async function saveRecordForm() {
     }
   } catch (_) { showToast('Não consegui enviar a foto. O registro ficou aberto para você tentar de novo.'); return; }
   const r = { id, system: data.get('system'), title: data.get('title').trim(), kind: data.get('kind'), status: data.get('status'), date: data.get('date') || today, odometer: data.get('odometer') || '', observation: data.get('observation').trim(), result: data.get('result').trim(), risk: data.get('risk'), location: data.get('location'), responsible: data.get('responsible').trim(), deadline: data.get('deadline'), cost: data.get('cost'), source: data.get('source').trim(), repair: data.get('repair') === 'on', rollback: data.get('rollback').trim(), nextStep: data.get('nextStep').trim(), photoId };
+  if (data.get('componentId')) r.componentId = data.get('componentId');
+  const problem = state.records.find(record => record.id === data.get('resolvesRecordId'));
+  if (canResolveProblem(r, problem)) r.resolvesRecordId = problem.id;
   if (existing && existing.photoId && existing.photoId !== photoId) deletePhoto(existing.photoId);
   if (existing) state.records = state.records.map(x => x.id === id ? r : x); else state.records.unshift(r); if (r.odometer && Number(r.odometer) > Number(state.odometer || 0)) state.odometer = Number(r.odometer); save(); closeModal(); showToast(remoteReady ? 'Registro salvo na garagem.' : 'Registro salvo neste navegador.');
 }
 function openRecordDetail(id) {
-  const r = state.records.find(x => x.id === id); if (!r) return; const html = '<div class="form-grid">' + field('Sistema / resultado', '<div>' + escapeHtml(r.system) + '<br>' + badge(r.status) + '</div>') + field('Data / local', '<div>' + fmtDate(r.date) + '<br>' + escapeHtml(r.location || 'Local não definido') + '</div>') + field('Observação', '<div>' + escapeHtml(r.observation || '—') + '</div>', true) + field('Resultado detalhado', '<div>' + escapeHtml(r.result || '—') + '</div>', true) + field('Risco / responsável', '<div>' + riskLabel(r.risk) + ' · ' + escapeHtml(r.responsible || 'Não definido') + '</div>') + field('Custo estimado / prazo', '<div>' + (r.cost ? 'R$ ' + escapeHtml(r.cost) : 'Sem estimativa') + ' · ' + fmtDate(r.deadline) + '</div>') + field('Precisa de reparo?', '<div>' + (r.repair ? 'Sim' : 'Não informado') + '</div>') + field('Rollback / alternativa segura', '<div>' + escapeHtml(r.rollback || '—') + '</div>', true) + field('Próximo passo', '<div>' + escapeHtml(r.nextStep || '—') + '</div>', true) + '</div>' + (r.photoId ? '<div id="photo-detail" class="photo-preview" style="margin-top:14px">Carregando foto…</div>' : '');
-  showModal(r.title, 'DETALHE DO REGISTRO', html, '<button class="button secondary" data-action="close-modal">Fechar</button><button class="button primary" data-edit-record="' + id + '">Editar</button>');
-  if (r.photoId) getPhoto(r.photoId).then(blob => { const box = $('#photo-detail'); if (!box || !blob) return; const url = URL.createObjectURL(blob); box.innerHTML = '<img src="' + url + '" alt="Foto do registro"><span>Foto anexada ao registro</span>'; box.querySelector('img').onload = () => URL.revokeObjectURL(url); }).catch(() => {});
+  const r = state.records.find(x => x.id === id); if (!r) return; const html = '<div class="form-grid">' + field('Sistema / resultado', '<div>' + escapeHtml(r.system) + '<br>' + badge(r.status) + '</div>') + field('Data / local', '<div>' + fmtDate(r.date) + '<br>' + escapeHtml(r.location || 'Local não definido') + '</div>') + field('Observação', '<div>' + escapeHtml(r.observation || '—') + '</div>', true) + field('Resultado detalhado', '<div>' + escapeHtml(r.result || '—') + '</div>', true) + field('Risco / responsável', '<div>' + riskLabel(r.risk) + ' · ' + escapeHtml(r.responsible || 'Não definido') + '</div>') + field('Custo estimado / prazo', '<div>' + (r.cost ? 'R$ ' + escapeHtml(r.cost) : 'Sem estimativa') + ' · ' + fmtDate(r.deadline) + '</div>') + field('Precisa de reparo?', '<div>' + (r.repair ? 'Sim' : 'Não informado') + '</div>') + field('Rollback / alternativa segura', '<div>' + escapeHtml(r.rollback || '—') + '</div>', true) + field('Próximo passo', '<div>' + escapeHtml(r.nextStep || '—') + '</div>', true) + '</div>' + (r.photoId ? '<div id="photo-detail" class="photo-preview">Carregando foto…</div>' : '');
+  const resolution = problemResolutions(state.records).get(id);
+  const problem = state.records.find(record => record.id === r.resolvesRecordId);
+  const linked = resolution || (canResolveProblem(r, problem) ? problem : null);
+  const resolutionLink = linked ? '<p>' + (resolution ? 'Resolvido por ' : 'Resolve ') +
+    '<button class="text-button" data-open-record="' + escapeHtml(linked.id) + '">' + escapeHtml(linked.title) + '</button></p>' : '';
+  const resolveButton = r.status === 'reprovado' && !resolution ? '<button class="button secondary" data-resolve-record="' +
+    escapeHtml(id) + '">Registrar resolução</button>' : '';
+  showModal(r.title, 'DETALHE DO REGISTRO', componentLink(r.componentId) + resolutionLink + html,
+    '<button class="button secondary" data-action="close-modal">Fechar</button>' + resolveButton +
+    '<button class="button primary" data-edit-record="' + escapeHtml(id) + '">Editar</button>');
+  if (r.photoId) getPhoto(r.photoId).then(blob => { const box = $('#photo-detail'); if (!box) return; if (!blob) { box.textContent = 'Foto indisponível.'; return; } const url = URL.createObjectURL(blob); box.innerHTML = '<img src="' + url + '" alt="Foto do registro"><span>Foto anexada ao registro</span>'; box.querySelector('img').onload = () => URL.revokeObjectURL(url); }).catch(() => {});
 }
 function newFuelForm() {
   const html = '<form id="fuel-form"><div class="form-grid">' + field('Data', '<input name="date" type="date" required value="' + today + '">') + field('Odômetro (km)', '<input name="odometer" type="number" min="0" step="1" required value="' + (state.odometer || '') + '">') + field('Litros de etanol', '<input name="liters" type="number" min="0.01" step="0.01" required placeholder="Ex.: 32,5">') + field('Valor total (R$)', '<input name="amount" type="number" min="0" step="0.01" placeholder="Opcional">') + field('Tanque', '<label class="check-field"><input type="checkbox" name="full"> Tanque completado até o primeiro desarme</label>') + field('Observação', '<textarea name="note" placeholder="Posto, condição de uso ou comprovante…"></textarea>') + '</div><p class="form-help">A média só considera o intervalo entre dois registros marcados como tanque cheio. Leituras parciais continuam no histórico, sem inventar consumo.</p></form>';
   showModal('Registrar abastecimento', 'ETANOL · CONSUMO', html, cancelButton + '<button class="button primary" id="save-fuel">Salvar abastecimento</button>');
   $('#save-fuel').addEventListener('click', () => { const form = $('#fuel-form'); if (!form.reportValidity()) return; const d = new FormData(form); const item = { id: uid(), date: d.get('date'), odometer: Number(d.get('odometer')), liters: Number(d.get('liters')), amount: Number(d.get('amount') || 0), full: d.get('full') === 'on', note: d.get('note').trim() }; state.refuels.push(item); state.odometer = Math.max(Number(state.odometer), item.odometer); save(); closeModal(); showToast('Abastecimento registrado.'); });
 }
-function newReminderForm() {
-  const html = '<form id="reminder-form"><div class="form-grid">' + field('Serviço / lembrete', '<input name="title" required maxlength="100" placeholder="Ex.: revisar freios">') + field('Responsável', '<input name="responsible" placeholder="Proprietário, mecânico…">') + field('Data alvo', '<input name="date" type="date">') + field('Odômetro alvo (km)', '<input name="odometer" type="number" min="0" placeholder="Opcional">') + field('Observação / critério', '<textarea name="note" placeholder="Use o manual ou laudo como referência; não invente intervalo."></textarea>', true) + '</div></form>';
+function newReminderForm(component) {
+  const html = '<form id="reminder-form"><div class="form-grid">' + field('Serviço / lembrete', '<input name="title" required maxlength="100" value="' + escapeHtml(component?.name || '') + '" placeholder="Ex.: revisar freios">') + field('Peça vinculada', componentSelect(component?.id)) + field('Responsável', '<input name="responsible" placeholder="Proprietário, mecânico…">') + field('Data alvo', '<input name="date" type="date">') + field('Odômetro alvo (km)', '<input name="odometer" type="number" min="0" placeholder="Opcional">') + field('Observação / critério', '<textarea name="note" placeholder="Use o manual ou laudo como referência; não invente intervalo."></textarea>', true) + '</div></form>';
   showModal('Novo lembrete', 'PLANEJAMENTO PREVENTIVO', html, cancelButton + '<button class="button primary" id="save-reminder">Salvar lembrete</button>');
-  $('#save-reminder').addEventListener('click', () => { const form = $('#reminder-form'); if (!form.reportValidity()) return; const d = new FormData(form); state.reminders.push({ id: uid(), title: d.get('title').trim(), responsible: d.get('responsible').trim(), date: d.get('date'), odometer: d.get('odometer'), note: d.get('note').trim() }); save(); closeModal(); showToast('Lembrete adicionado.'); });
+  $('#save-reminder').addEventListener('click', () => { const form = $('#reminder-form'); if (!form.reportValidity()) return; const d = new FormData(form); state.reminders.push({ id: uid(), title: d.get('title').trim(), responsible: d.get('responsible').trim(), date: d.get('date'), odometer: d.get('odometer'), note: d.get('note').trim(), ...(d.get('componentId') ? { componentId: d.get('componentId') } : {}) }); save(); closeModal(); showToast('Lembrete adicionado.'); });
 }
 function editOdometer() { const html = '<form id="odo-form"><div class="form-field"><label>Odômetro atual (km)</label><input name="odometer" type="number" min="0" step="1" required value="' + (state.odometer || '') + '"><span class="form-help">Atualize com a leitura do painel. O histórico dos abastecimentos permanece inalterado.</span></div></form>'; showModal('Atualizar odômetro', 'DADOS DO VEÍCULO', html, cancelButton + '<button class="button primary" id="save-odo">Salvar</button>'); $('#save-odo').addEventListener('click', () => { const form = $('#odo-form'); if (!form.reportValidity()) return; state.odometer = Number(new FormData(form).get('odometer')); save(); closeModal(); showToast('Odômetro atualizado.'); }); }
 async function blobAsDataUrl(blob) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob); }); }
@@ -249,16 +355,25 @@ async function exportBackup() {
   const payload = { app: 'Fox em Dia', version: 1, exportedAt: new Date().toISOString(), state: copy };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'fox-em-dia-backup-' + today + '.json'; a.click(); URL.revokeObjectURL(url); showToast('Backup exportado, incluindo fotos disponíveis.');
 }
+function backupPhoto(data) {
+  const match = typeof data === 'string' && /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(data);
+  if (!match || match[2].length > Math.ceil(5 * 1024 * 1024 / 3) * 4) throw new Error('Foto inválida');
+  return new Blob([Uint8Array.from(atob(match[2]), char => char.charCodeAt(0))], { type: match[1] });
+}
 function importBackup(file) {
   if (!file) return;
   const reader = new FileReader(); reader.onload = async () => {
     const parsed = safeParse(reader.result);
     if (!parsed || parsed.app !== 'Fox em Dia' || !parsed.state || !Array.isArray(parsed.state.records)) return showToast('Arquivo de backup inválido.');
     if (!confirm('Importar este backup vai substituir os registros da garagem atual. Continuar?')) return;
-    const imported = parsed.state;
+    const imported = {
+      ...parsed.state,
+      refuels: Array.isArray(parsed.state.refuels) ? parsed.state.refuels : [],
+      reminders: Array.isArray(parsed.state.reminders) ? parsed.state.reminders : []
+    };
     for (const record of imported.records) {
       if (record.photoData) {
-        try { const blob = await (await fetch(record.photoData)).blob(); await savePhoto(record.photoId || (record.photoId = uid()), blob); if (remoteReady) await uploadPhoto(record.photoId, blob); }
+        try { const blob = backupPhoto(record.photoData); await savePhoto(record.photoId || (record.photoId = uid()), blob); if (remoteReady) await uploadPhoto(record.photoId, blob); }
         catch (_) { record.photoId = ''; }
         delete record.photoData;
       } else if (record.photoId) record.photoId = '';
@@ -270,9 +385,19 @@ function importBackup(file) {
 function deleteRecord(id) { const r = state.records.find(x => x.id === id); if (!r || !confirm('Excluir o registro “' + r.title + '”?')) return; if (r.photoId) deletePhoto(r.photoId); state.records = state.records.filter(x => x.id !== id); save(); showToast('Registro excluído.'); }
 function bindEvents() {
   document.addEventListener('click', e => {
+    const component = e.target.closest('[data-open-component]');
+    if (component) { closeModal(); displayView('veiculo'); return showVehicle(component.dataset.openComponent); }
     const nav = e.target.closest('[data-view]'); if (nav) return displayView(nav.dataset.view);
     const link = e.target.closest('[data-view-link]'); if (link) return displayView(link.dataset.viewLink);
     const action = e.target.closest('[data-action]'); if (action) { const name = action.dataset.action; if (name === 'new-record') return recordForm(null); if (name === 'new-fuel') return newFuelForm(); if (name === 'new-reminder') return newReminderForm(); if (name === 'edit-odometer') return editOdometer(); if (name === 'close-modal') return closeModal(); if (name === 'backup') return exportBackup(); if (name === 'restore') return $('#restore-file').click(); }
+    const resolve = e.target.closest('[data-resolve-record]');
+    if (resolve) {
+      const problem = state.records.find(r => r.id === resolve.dataset.resolveRecord);
+      if (problem) return recordForm(null, {
+        system: problem.system, componentId: problem.componentId, title: ('Resolução · ' + problem.title).slice(0, 120),
+        kind: 'servico', status: 'aprovado', resolvesRecordId: problem.id
+      });
+    }
     const edit = e.target.closest('[data-edit-record]'); if (edit) { const r = state.records.find(x => x.id === edit.dataset.editRecord); closeModal(); return recordForm(r); }
     const detail = e.target.closest('[data-open-record]'); if (detail) return openRecordDetail(detail.dataset.openRecord);
     const del = e.target.closest('[data-delete-record]'); if (del) return deleteRecord(del.dataset.deleteRecord);
@@ -280,7 +405,7 @@ function bindEvents() {
     const delFuel = e.target.closest('[data-delete-fuel]'); if (delFuel) { if (confirm('Excluir este abastecimento?')) { state.refuels = state.refuels.filter(r => r.id !== delFuel.dataset.deleteFuel); save(); } return; }
     const guide = e.target.closest('[data-guide-record]'); if (guide) { const [type, idx] = guide.dataset.guideRecord.split(':'); const t = (type === 'pro' ? proTests : homeTests)[Number(idx)]; return recordForm(null, { system: t.system, title: t.title }); }
   });
-  $('#record-search').addEventListener('input', renderRecords); ['filter-system', 'filter-status', 'filter-location'].forEach(id => $('#' + id).addEventListener('change', renderRecords)); $('#timeline-filter').addEventListener('change', renderTimeline); $('#restore-file').addEventListener('change', e => { importBackup(e.target.files[0]); e.target.value = ''; }); $('#menu-toggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
+  $('#record-search').addEventListener('input', renderRecords); ['filter-system', 'filter-status', 'filter-location', 'filter-component'].forEach(id => $('#' + id).addEventListener('change', renderRecords)); $('#timeline-filter').addEventListener('change', renderTimeline); $('#restore-file').addEventListener('change', e => { importBackup(e.target.files[0]); e.target.value = ''; }); $('#menu-toggle').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
   $('#modal-backdrop').addEventListener('click', e => { if (e.target.id === 'modal-backdrop') closeModal(); }); document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal-backdrop').hidden) closeModal(); });
 }
 bindEvents(); renderAll(); initializeRemote();

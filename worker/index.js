@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { html, css, app } from './ui.js';
+import { html, css } from './ui.js';
 
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -117,12 +117,14 @@ export default {
       return stub.fetch(new Request(target, request));
     }
 
+    if (url.pathname.startsWith('/assets/')) return env.ASSETS.fetch(request);
+
     const content = url.pathname === '/' || url.pathname === '/index.html' ? html
       : url.pathname === '/styles.css' ? css
-      : url.pathname === '/app.js' ? app : null;
+      : null;
     if (content === null) return new Response('Not found.', { status: 404 });
     const contentType = url.pathname === '/styles.css' ? 'text/css; charset=utf-8'
-      : url.pathname === '/app.js' ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8';
+      : 'text/html; charset=utf-8';
     const headers = {
       'Content-Type': contentType,
       'Cache-Control': 'private, no-store',
