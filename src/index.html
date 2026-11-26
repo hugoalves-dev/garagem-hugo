@@ -7,7 +7,7 @@
   <meta name="description" content="Inspeção, manutenção e histórico do seu Volkswagen Fox.">
   <title>Fox em Dia — garagem do Hugo</title>
   <link rel="stylesheet" href="./styles.css">
-  <script defer src="./app.js"></script>
+  <script type="module" src="./app.js"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -19,6 +19,7 @@
       <div class="nav-label">GARAGEM</div>
       <nav class="nav-list" aria-label="Navegação principal">
         <button class="nav-item active" data-view="inicio"><span class="nav-icon">⌂</span> Visão geral</button>
+        <button class="nav-item" data-view="veiculo"><span class="nav-icon">◇</span> Veículo 3D</button>
         <button class="nav-item" data-view="registros"><span class="nav-icon">▤</span> Inspeções <span class="nav-count" id="nav-record-count">0</span></button>
         <button class="nav-item" data-view="testes"><span class="nav-icon">◉</span> Testes em casa</button>
         <button class="nav-item" data-view="profissionais"><span class="nav-icon">⚒</span> Oficina & autoelétrica</button>
@@ -84,9 +85,11 @@
         <footer class="safety-note"><span>ⓘ</span><p>Este painel organiza observações; não substitui manual, scanner profissional ou avaliação técnica. Se uma luz vermelha acender com o carro em movimento, pare em local seguro e procure assistência.</p></footer>
       </section>
 
+      <section class="page" id="view-veiculo" aria-label="Veículo 3D"></section>
+
       <section class="page" id="view-registros">
         <div class="page-heading"><div><div class="eyebrow">CHECKLIST DO FOX</div><h1>Inspeções</h1><p class="subheading">Registre evidências, resultado e o próximo passo de cada sistema.</p></div><button class="button primary" data-action="new-record">＋ Novo registro</button></div>
-        <div class="filter-bar"><label class="search-box"><span>⌕</span><input id="record-search" placeholder="Buscar item, sintoma ou observação"></label><select id="filter-system"><option value="">Todos os sistemas</option></select><select id="filter-status"><option value="">Todos os status</option><option value="pendente">Pendente</option><option value="aprovado">Aprovado</option><option value="reprovado">Reprovado</option><option value="inconclusivo">Inconclusivo</option><option value="agendado">Agendado</option></select><select id="filter-location"><option value="">Lins e Bauru</option><option value="Lins">Lins</option><option value="Bauru">Bauru</option><option value="Outro">Outro / não definido</option></select></div>
+        <div class="filter-bar"><label class="search-box"><span>⌕</span><input id="record-search" placeholder="Buscar item, sintoma ou observação"></label><select id="filter-component" aria-label="Filtrar por peça"><option value="">Todas as peças</option></select><select id="filter-system"><option value="">Todos os sistemas</option></select><select id="filter-status"><option value="">Todos os status</option><option value="pendente">Pendente</option><option value="aprovado">Aprovado</option><option value="reprovado">Reprovado</option><option value="inconclusivo">Inconclusivo</option><option value="agendado">Agendado</option></select><select id="filter-location"><option value="">Lins e Bauru</option><option value="Lins">Lins</option><option value="Bauru">Bauru</option><option value="Outro">Outro / não definido</option></select></div>
         <div class="record-summary" id="record-summary"></div><div class="record-grid" id="record-grid"></div>
       </section>
 

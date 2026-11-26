@@ -20,5 +20,6 @@
       "identity": { "email": "local@example.invalid" }
     }
   },
+  "assets": { "directory": "./dist/static", "binding": "ASSETS", "run_worker_first": true },
   "observability": { "enabled": true }
 }

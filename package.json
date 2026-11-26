@@ -7,10 +7,16 @@
     "build": "node scripts/build-ui.mjs",
     "dev": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "check": "node --check worker/index.js && node --check worker/ui.js && wrangler deploy --dry-run"
+    "check": "npm run build && npm test && node --check worker/index.js && wrangler deploy --dry-run",
+    "test": "node --test",
+    "test:browser": "npm run build && node scripts/vehicle-browser.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
+    "playwright-core": "^1.58.2",
     "wrangler": "4.163.0"
+  },
+  "dependencies": {
+    "three": "^0.183.2"
   }
 }
